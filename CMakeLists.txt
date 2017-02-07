@@ -1,27 +1,26 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
-PROJECT("love-nuklear" C)
-
-SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-FIND_PACKAGE(LuaJIT REQUIRED)
+PROJECT("love-nuklear")
 
 SET(LIB_NAME "nuklear")
 
-ADD_LIBRARY(
+set ( SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR} )
+
+add_library(
 	"${LIB_NAME}"
-	MODULE
-	src/nuklear/nuklear.h
-	src/nuklear_love.c
+	STATIC
+	${SOURCE_ROOT}/src/nuklear/nuklear.h
+	${SOURCE_ROOT}/src/wrap_Nuklear.cpp
+	${SOURCE_ROOT}/src/Nuklear.cpp
 )
 
 TARGET_INCLUDE_DIRECTORIES(
-	"${LIB_NAME}"
-	PUBLIC
-	"${LUA_INCLUDE_DIR}"
+	"${LIB_NAME}" PUBLIC
+	${PLUGIN_MODULE_INCLUDE_DIRS}
 )
 
 TARGET_LINK_LIBRARIES(
 	"${LIB_NAME}"
-	${LUA_LIBRARIES}
+	${LOVE_LUA_LIBRARY}
 )
 
 SET_TARGET_PROPERTIES("${LIB_NAME}" PROPERTIES PREFIX "")

@@ -4,11 +4,15 @@
  * adapted to LOVE in 2016 by Kevin Harrison
  */
 
+#include "wrap_Nuklear.h"
+
 #include <stdio.h>
 #include <string.h>
+#include <common/runtime.h>
 
-#include <lua.h>
-#include <lauxlib.h>
+#include <modules/graphics/Graphics.h>
+
+#include "Nuklear.h"
 
 #define NK_IMPLEMENTATION
 #define NK_INCLUDE_FIXED_TYPES
@@ -49,157 +53,125 @@ static struct nk_cursor cursors[NK_CURSOR_COUNT];
 static float *floats;
 static int layout_ratio_count;
 
+static love::graphics::Graphics *lg;
+
+static void nk_love_set_color(struct nk_color col)
+{
+	lg->setColor(love::graphics::Colorf(col.r / 255.0, col.g / 255.0, col.b / 255.0, col.a / 255.0));
+}
+
 static void nk_love_configureGraphics(int line_thickness, struct nk_color col)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-	lua_remove(L, -2);
-	if (line_thickness >= 0) {
-		lua_getfield(L, -1, "setLineWidth");
-		lua_pushnumber(L, line_thickness);
-		lua_call(L, 1, 0);
-	}
-	lua_getfield(L, -1, "setColor");
-	lua_pushnumber(L, col.r);
-	lua_pushnumber(L, col.g);
-	lua_pushnumber(L, col.b);
-	lua_pushnumber(L, col.a);
-	lua_call(L, 4, 0);
+	lg->setLineWidth(line_thickness);
+	nk_love_set_color(col);
 }
 
 static void nk_love_getGraphics(float *line_thickness, struct nk_color *color)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-	lua_getfield(L, -1, "getLineWidth");
-	lua_call(L, 0, 1);
-	*line_thickness = lua_tonumber(L, -1);
-	lua_pop(L, 1);
-	lua_getfield(L, -1, "getColor");
-	lua_call(L, 0, 4);
-	color->r = lua_tointeger(L, -4);
-	color->g = lua_tointeger(L, -3);
-	color->b = lua_tointeger(L, -2);
-	color->a = lua_tointeger(L, -1);
-	lua_pop(L, 6);
+	*line_thickness = lg->getLineWidth();
+	auto love_color = lg->getColor();
+	color->r = love_color.r;
+	color->g = love_color.g;
+	color->b = love_color.b;
+	color->a = love_color.a;
 }
 
 static void nk_love_scissor(int x, int y, int w, int h)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-	lua_getfield(L, -1, "setScissor");
-	lua_pushnumber(L, x);
-	lua_pushnumber(L, y);
-	lua_pushnumber(L, w);
-	lua_pushnumber(L, h);
-	lua_call(L, 4, 0);
-	lua_pop(L, 2);
+	love::Rect rect;
+	rect.x = x;
+	rect.y = y;
+	rect.w = w;
+	rect.h = h;
+	lg->setScissor(rect);
 }
 
 static void nk_love_draw_line(int x0, int y0, int x1, int y1,
 	int line_thickness, struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "line");
-	lua_pushnumber(L, x0);
-	lua_pushnumber(L, y0);
-	lua_pushnumber(L, x1);
-	lua_pushnumber(L, y1);
-	lua_call(L, 4, 0);
-	lua_pop(L, 1);
+	float coords[] = {(float) x0, (float) y1, (float) x1, (float) y1};
+	lg->polyline(coords, 4);
 }
 
-static void nk_love_draw_rect(int x, int y,	unsigned int w,
+static void nk_love_draw_rect(int x, int y, unsigned int w,
 	unsigned int h, unsigned int r, int line_thickness,
 	struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "rectangle");
+	love::graphics::Graphics::DrawMode mode;
 	if (line_thickness >= 0) {
-		lua_pushstring(L, "line");
+		mode = love::graphics::Graphics::DrawMode::DRAW_LINE;
 	} else {
-		lua_pushstring(L, "fill");
+		mode = love::graphics::Graphics::DrawMode::DRAW_FILL;
 	}
-	lua_pushnumber(L, x);
-	lua_pushnumber(L, y);
-	lua_pushnumber(L, w);
-	lua_pushnumber(L, h);
-	lua_pushnumber(L, r);
-	lua_pushnumber(L, r);
-	lua_call(L, 7, 0);
-	lua_pop(L, 1);
+	lg->rectangle(
+		mode,
+		(float) x,
+		(float) y,
+		(float) w,
+		(float) h,
+		(float) r,
+		(float) r);
 }
 
 static void nk_love_draw_triangle(int x0, int y0, int x1, int y1,
 	int x2, int y2,	int line_thickness, struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "polygon");
+	love::graphics::Graphics::DrawMode mode;
 	if (line_thickness >= 0) {
-		lua_pushstring(L, "line");
+		mode = love::graphics::Graphics::DrawMode::DRAW_LINE;
 	} else {
-		lua_pushstring(L, "fill");
+		mode = love::graphics::Graphics::DrawMode::DRAW_FILL;
 	}
-	lua_pushnumber(L, x0);
-	lua_pushnumber(L, y0);
-	lua_pushnumber(L, x1);
-	lua_pushnumber(L, y1);
-	lua_pushnumber(L, x2);
-	lua_pushnumber(L, y2);
-	lua_call(L, 7, 0);
-	lua_pop(L, 1);
+	float coords[] = { (float) x0, (float) y0, (float) x1, (float) y1, (float) x2, (float) y2};
+	lg->polygon(mode, coords, 6);
 }
 
 static void nk_love_draw_polygon(const struct nk_vec2i *pnts, int count,
 	int line_thickness, struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "polygon");
+	love::graphics::Graphics::DrawMode mode;
 	if (line_thickness >= 0) {
-		lua_pushstring(L, "line");
+		mode = love::graphics::Graphics::DrawMode::DRAW_LINE;
 	} else {
-		lua_pushstring(L, "fill");
+		mode = love::graphics::Graphics::DrawMode::DRAW_FILL;
 	}
+	float coords[NK_LOVE_MAX_POINTS*2];
 	int i;
 	for (i = 0; (i < count) && (i < NK_LOVE_MAX_POINTS); ++i) {
-		lua_pushnumber(L, pnts[i].x);
-		lua_pushnumber(L, pnts[i].y);
+		coords[2*i] = (float) pnts[i].x;
+		coords[2*i + 1] = (float) pnts[i].y;
 	}
-	lua_call(L, 1 + count * 2, 0);
-	lua_pop(L, 1);
+	lg->polygon(mode, coords, i);
 }
 
 static void nk_love_draw_polyline(const struct nk_vec2i *pnts,
 	int count, int line_thickness, struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "line");
+	float coords[NK_LOVE_MAX_POINTS*2];
 	int i;
 	for (i = 0; (i < count) && (i < NK_LOVE_MAX_POINTS); ++i) {
-		lua_pushnumber(L, pnts[i].x);
-		lua_pushnumber(L, pnts[i].y);
+		coords[2*i] = (float) pnts[i].x;
+		coords[2*i + 1] = (float) pnts[i].y;
 	}
-	lua_call(L, count * 2, 0);
-	lua_pop(L, 1);
+	lg->polyline(coords, i);
 }
 
 static void nk_love_draw_circle(int x, int y, unsigned int w,
 	unsigned int h, int line_thickness, struct nk_color col)
 {
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "ellipse");
+	love::graphics::Graphics::DrawMode mode;
 	if (line_thickness >= 0) {
-		lua_pushstring(L, "line");
+		mode = love::graphics::Graphics::DrawMode::DRAW_LINE;
 	} else {
-		lua_pushstring(L, "fill");
+		mode = love::graphics::Graphics::DrawMode::DRAW_FILL;
 	}
-	lua_pushnumber(L, x + w / 2);
-	lua_pushnumber(L, y + h / 2);
-	lua_pushnumber(L, w / 2);
-	lua_pushnumber(L, h / 2);
-	lua_call(L, 5, 0);
-	lua_pop(L, 1);
+	lg->ellipse(mode, x + w/2, y + h/2, w/2, h/2);
 }
 
 static void nk_love_draw_curve(struct nk_vec2i p1, struct nk_vec2i p2,
@@ -215,7 +187,7 @@ static void nk_love_draw_curve(struct nk_vec2i p1, struct nk_vec2i p2,
 	}
 	t_step = 1.0f/(float)num_segments;
 	nk_love_configureGraphics(line_thickness, col);
-	lua_getfield(L, -1, "line");
+	float coords[num_segments * 2];
 	for (i_step = 1; i_step <= num_segments; ++i_step) {
 		float t = t_step * (float)i_step;
 		float u = 1.0f - t;
@@ -225,11 +197,10 @@ static void nk_love_draw_curve(struct nk_vec2i p1, struct nk_vec2i p2,
 		float w4 = t * t *t;
 		float x = w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x;
 		float y = w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y;
-		lua_pushnumber(L, x);
-		lua_pushnumber(L, y);
+		coords[2 * (i_step - 1)] = x;
+		coords[2 * (i_step - 1) + 1] = y;
 	}
-	lua_call(L, num_segments * 2, 0);
-	lua_pop(L, 1);
+	lg->polyline(coords, num_segments * 2);
 }
 
 static float nk_love_get_text_width(nk_handle handle, float height,
@@ -238,59 +209,31 @@ static float nk_love_get_text_width(nk_handle handle, float height,
 	lua_getfield(L, LUA_REGISTRYINDEX, "nuklear");
 	lua_getfield(L, -1, "font");
 	lua_rawgeti(L, -1, handle.id);
-	lua_getfield(L, -1, "getWidth");
-	lua_insert(L, -2);
-	lua_pushlstring(L, text, len);
-	lua_call(L, 2, 1);
-	float width = lua_tonumber(L, -1);
+	love::graphics::Font *font = luax_checktype<love::graphics::Font>(L, -1);
 	lua_pop(L, 3);
-	return width;
+	return font->getWidth(std::string(text, len));
 }
 
 static void nk_love_draw_text(int fontref, struct nk_color cbg,
 	struct nk_color cfg, int x, int y, unsigned int w, unsigned int h,
 	float height, int len, const char *text)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
+	//nk_love_set_color(cbg);
+	//lg->rectangle(love::graphics::Graphics::DrawMode::DRAW_FILL, x, y, w, height);
+	nk_love_set_color(cfg);
 
-	lua_getfield(L, -1, "setColor");
-	lua_pushnumber(L, cbg.r);
-	lua_pushnumber(L, cbg.g);
-	lua_pushnumber(L, cbg.b);
-	lua_pushnumber(L, cbg.a);
-	lua_call(L, 4, 0);
-
-	lua_getfield(L, -1, "rectangle");
-	lua_pushstring(L, "fill");
-	lua_pushnumber(L, x);
-	lua_pushnumber(L, y);
-	lua_pushnumber(L, w);
-	lua_pushnumber(L, h);
-	lua_call(L, 5, 0);
-
-	lua_getfield(L, -1, "setColor");
-	lua_pushnumber(L, cfg.r);
-	lua_pushnumber(L, cfg.g);
-	lua_pushnumber(L, cfg.b);
-	lua_pushnumber(L, cfg.a);
-	lua_call(L, 4, 0);
-
-	lua_getfield(L, -1, "setFont");
 	lua_getfield(L, LUA_REGISTRYINDEX, "nuklear");
 	lua_getfield(L, -1, "font");
 	lua_rawgeti(L, -1, fontref);
-	lua_replace(L, -3);
-	lua_pop(L, 1);
-	lua_call(L, 1, 0);
+	auto font = luax_checktype<love::graphics::Font>(L, -1);
+	lua_pop(L, 3);
 
-	lua_getfield(L, -1, "print");
-	lua_pushlstring(L, text, len);
-	lua_pushnumber(L, x);
-	lua_pushnumber(L, y);
-	lua_call(L, 3, 0);
-
-	lua_pop(L, 2);
+	lg->setFont(font);
+	std::vector<love::graphics::Font::ColoredString> str;
+	auto transform = lg->getTransform();
+	transform.translate(x, y);
+	str.push_back({text, lg->getColor()});
+	lg->print(str, transform);
 }
 
 static void interpolate_color(struct nk_color c1, struct nk_color c2,
@@ -311,28 +254,17 @@ static void nk_love_draw_rect_multi_color(int x, int y, unsigned int w,
 	unsigned int h, struct nk_color left, struct nk_color top,
 	struct nk_color right, struct nk_color bottom)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-
-	lua_getfield(L, -1, "push");
-	lua_pushstring(L, "all");
-	lua_call(L, 1, 0);
-	lua_getfield(L, -1, "setColor");
-	lua_pushnumber(L, 255);
-	lua_pushnumber(L, 255);
-	lua_pushnumber(L, 255);
-	lua_call(L, 3, 0);
-	lua_getfield(L, -1, "setPointSize");
-	lua_pushnumber(L, 1);
-	lua_call(L, 1, 0);
+	lg->push(love::graphics::Graphics::StackType::STACK_ALL);
+	nk_love_set_color({255, 255, 255, 255});
+	lg->setPointSize(1);
 
 	struct nk_color X1, X2, Y;
 	float fraction_x, fraction_y;
 	int i,j;
 
-	lua_getfield(L, -1, "points");
-	lua_createtable(L, w * h, 0);
-
+	float points[h * w * 2];
+	love::graphics::Colorf colors [h * w];
+	int n = 0;
 	for (j = 0; j < h; j++) {
 		fraction_y = ((float)j) / h;
 		for (i = 0; i < w; i++) {
@@ -340,56 +272,36 @@ static void nk_love_draw_rect_multi_color(int x, int y, unsigned int w,
 			interpolate_color(left, top, &X1, fraction_x);
 			interpolate_color(right, bottom, &X2, fraction_x);
 			interpolate_color(X1, X2, &Y, fraction_y);
-			lua_createtable(L, 6, 0);
-			lua_pushnumber(L, x + i);
-			lua_rawseti(L, -2, 1);
-			lua_pushnumber(L, y + j);
-			lua_rawseti(L, -2, 2);
-			lua_pushnumber(L, Y.r);
-			lua_rawseti(L, -2, 3);
-			lua_pushnumber(L, Y.g);
-			lua_rawseti(L, -2, 4);
-			lua_pushnumber(L, Y.b);
-			lua_rawseti(L, -2, 5);
-			lua_pushnumber(L, Y.a);
-			lua_rawseti(L, -2, 6);
-			lua_rawseti(L, -2, i + j * w + 1);
+			points[2 * n] = x + i;
+			points[2 * n + 1] = y + j;
+			colors[n].r = Y.r / 255.0;
+			colors[n].g = Y.g / 255.0;
+			colors[n].b = Y.b / 255.0;
+			colors[n].a = Y.a / 255.0;
+			n++;
 		}
 	}
 
-	lua_call(L, 1, 0);
-	lua_getfield(L, -1, "pop");
-	lua_call(L, 0, 0);
-	lua_pop(L, 2);
+	lg->points(points, colors, n);
+
+	lg->pop();
 }
 
 static void nk_love_clear(struct nk_color col)
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-	lua_getfield(L, -1, "clear");
-	lua_pushnumber(L, col.r);
-	lua_pushnumber(L, col.g);
-	lua_pushnumber(L, col.b);
-	lua_pushnumber(L, col.a);
-	lua_call(L, 4, 0);
-	lua_pop(L, 2);
+	love::graphics::Colorf lcol(col.r/255.0, col.g/255.0, col.b/255.0, col.a/255.0);
+	lg->clear(lcol);
 }
 
 static void nk_love_blit()
 {
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-	lua_getfield(L, -1, "present");
-	lua_call(L, 0, 0);
-	lua_pop(L, 2);
+	lg->present(0);
 }
 
 static void nk_love_draw_image(int x, int y, unsigned int w, unsigned int h,
 	struct nk_image image, struct nk_color color)
 {
 	nk_love_configureGraphics(-1, color);
-	lua_getfield(L, -1, "draw");
 	lua_getfield(L, LUA_REGISTRYINDEX, "nuklear");
 	lua_getfield(L, -1, "image");
 	lua_rawgeti(L, -1, image.handle.id);
@@ -700,7 +612,7 @@ static struct nk_color nk_love_checkcolor(int index)
 	if (len == 9) {
 		sscanf(color_string + 7, "%02x", &a);
 	}
-	struct nk_color color = {r, g, b, a};
+	struct nk_color color = {(nk_byte) r, (nk_byte) g, (nk_byte) b, (nk_byte) a};
 	return color;
 }
 
@@ -730,7 +642,7 @@ static nk_flags nk_love_parse_window_flags(int flags_begin) {
 			flags |= NK_WINDOW_BACKGROUND;
 		else {
 			const char *msg = lua_pushfstring(L, "unrecognized window flag '%s'", flag);
-			return luaL_argerror(L, i, msg);
+			luaL_argerror(L, i, msg);
 		}
 	}
 	return flags;
@@ -771,7 +683,7 @@ static enum nk_symbol_type nk_love_checksymbol(int index)
 		return NK_SYMBOL_MAX;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized symbol type '%s'", s);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -800,7 +712,7 @@ static nk_flags nk_love_checkalign(int index)
 		return NK_TEXT_ALIGN_BOTTOM | NK_TEXT_ALIGN_RIGHT;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized alignment '%s'", s);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -817,7 +729,7 @@ static enum nk_buttons nk_love_checkbutton(int index)
 		return NK_BUTTON_MIDDLE;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized mouse button '%s'", s);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -831,7 +743,7 @@ static enum nk_layout_format nk_love_checkformat(int index) {
 		return NK_STATIC;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized layout format '%s'", type);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -845,7 +757,7 @@ static enum nk_tree_type nk_love_checktree(int index) {
 		return NK_TREE_TAB;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized tree type '%s'", type_string);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -859,7 +771,7 @@ static enum nk_collapse_states nk_love_checkstate(int index) {
 		return NK_MAXIMIZED;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized tree state '%s'", state_string);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -873,7 +785,7 @@ static enum nk_button_behavior nk_love_checkbehavior(int index) {
 		return NK_BUTTON_REPEATER;
 	else {
 		const char *msg = lua_pushfstring(L, "unrecognized button behavior '%s'", behavior_string);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -887,7 +799,7 @@ static enum nk_color_format nk_love_checkcolorformat(int index) {
 	 	return NK_RGBA;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized color format '%s'", format_string);
-		return luaL_argerror(L, index, msg);
+		luaL_argerror(L, index, msg);
 	}
 }
 
@@ -903,7 +815,7 @@ static nk_flags nk_love_checkedittype(int index) {
 		return NK_EDIT_BOX;
 	} else {
 	 	const char *msg = lua_pushfstring(L, "unrecognized edit type '%s'", type_string);
-	 	return luaL_argerror(L, index, msg);
+	 	luaL_argerror(L, index, msg);
  }
 }
 
@@ -917,7 +829,7 @@ static enum nk_popup_type nk_love_checkpopup(int index) {
 		return NK_POPUP_STATIC;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized popup type '%s'", popup_type);
-	 	return luaL_argerror(L, index, msg);
+	 	luaL_argerror(L, index, msg);
 	}
 }
 
@@ -933,7 +845,7 @@ static enum nk_love_draw_mode nk_love_checkdraw(int index) {
 		return NK_LOVE_LINE;
 	} else {
 		const char *msg = lua_pushfstring(L, "unrecognized draw mode '%s'", mode);
-	 	return luaL_argerror(L, index, msg);
+	 	luaL_argerror(L, index, msg);
 	}
 }
 
@@ -973,6 +885,7 @@ static void *nk_love_malloc(size_t size) {
 
 static int nk_love_init(lua_State *luaState)
 {
+	lg = love::Module::getInstance<love::graphics::Graphics>(love::Module::M_GRAPHICS);
 	L = luaState;
 	nk_love_assert_argc(lua_gettop(L) == 0);
 	lua_newtable(L);
@@ -984,7 +897,7 @@ static int nk_love_init(lua_State *luaState)
 	lua_setfield(L, -2, "image");
 	lua_newtable(L);
 	lua_setfield(L, -2, "stack");
-	fonts = nk_love_malloc(sizeof(struct nk_user_font) * NK_LOVE_MAX_FONTS);
+	fonts = (nk_user_font*) nk_love_malloc(sizeof(struct nk_user_font) * NK_LOVE_MAX_FONTS);
 	lua_getglobal(L, "love");
 	nk_love_assert(lua_istable(L, -1), "LOVE-Nuklear requires LOVE environment");
 	lua_getfield(L, -1, "graphics");
@@ -996,9 +909,9 @@ static int nk_love_init(lua_State *luaState)
 	context.clip.copy = nk_love_clipbard_copy;
 	context.clip.paste = nk_love_clipbard_paste;
 	context.clip.userdata = nk_handle_ptr(0);
-	edit_buffer = nk_love_malloc(NK_LOVE_EDIT_BUFFER_LEN);
-	combobox_items = nk_love_malloc(sizeof(char*) * NK_LOVE_COMBOBOX_MAX_ITEMS);
-	floats = nk_love_malloc(sizeof(float) * NK_MAX(NK_LOVE_MAX_RATIOS, NK_LOVE_MAX_POINTS * 2));
+	edit_buffer = (char*) nk_love_malloc(NK_LOVE_EDIT_BUFFER_LEN);
+	combobox_items = (const char **) nk_love_malloc(sizeof(char*) * NK_LOVE_COMBOBOX_MAX_ITEMS);
+	floats = (float*) nk_love_malloc(sizeof(float) * NK_MAX(NK_LOVE_MAX_RATIOS, NK_LOVE_MAX_POINTS * 2));
 	return 0;
 }
 
@@ -1099,14 +1012,7 @@ static int nk_love_wheelmoved(lua_State *L)
 
 static int nk_love_draw(lua_State *L)
 {
-	nk_love_assert_argc(lua_gettop(L) == 0);
-
-	lua_getglobal(L, "love");
-	lua_getfield(L, -1, "graphics");
-
-	lua_getfield(L, -1, "push");
-	lua_pushstring(L, "all");
-	lua_call(L, 1, 0);
+	lg->push(love::graphics::Graphics::StackType::STACK_ALL);
 
 	const struct nk_command *cmd;
 	nk_foreach(cmd, &context)
@@ -1192,9 +1098,7 @@ static int nk_love_draw(lua_State *L)
 		}
 	}
 
-	lua_getfield(L, -1, "pop");
-	lua_call(L, 0, 0);
-	lua_pop(L, 2);
+	lg->pop();
 	nk_clear(&context);
 	return 0;
 }
@@ -3469,234 +3373,245 @@ static int nk_love_input_is_hovered(lua_State *L)
 	return 1;
 }
 
-#define NK_LOVE_REGISTER(name, func) \
-	lua_pushcfunction(L, func); \
-	lua_setfield(L, -2, name)
-
-LUALIB_API int luaopen_nuklear(lua_State *L)
+// List of functions to wrap.
+static const luaL_Reg functions[] =
 {
-	lua_newtable(L);
+	{"init", nk_love_init},
+	{"shutdown", nk_love_shutdown},
 
-	NK_LOVE_REGISTER("init", nk_love_init);
-	NK_LOVE_REGISTER("shutdown", nk_love_shutdown);
+	{"keypressed", nk_love_keypressed},
+	{"keyreleased", nk_love_keyreleased},
+	{"mousepressed", nk_love_mousepressed},
+	{"mousereleased", nk_love_mousereleased},
+	{"mousemoved", nk_love_mousemoved},
+	{"textinput", nk_love_textinput},
+	{"wheelmoved", nk_love_wheelmoved},
 
-	NK_LOVE_REGISTER("keypressed", nk_love_keypressed);
-	NK_LOVE_REGISTER("keyreleased", nk_love_keyreleased);
-	NK_LOVE_REGISTER("mousepressed", nk_love_mousepressed);
-	NK_LOVE_REGISTER("mousereleased", nk_love_mousereleased);
-	NK_LOVE_REGISTER("mousemoved", nk_love_mousemoved);
-	NK_LOVE_REGISTER("textinput", nk_love_textinput);
-	NK_LOVE_REGISTER("wheelmoved", nk_love_wheelmoved);
+	{"draw", nk_love_draw},
 
-	NK_LOVE_REGISTER("draw", nk_love_draw);
+	{"frame_begin", nk_love_frame_begin},
+	{"frameBegin", nk_love_frame_begin},
+	{"frame_end", nk_love_frame_end},
+	{"frameEnd", nk_love_frame_end},
 
-	NK_LOVE_REGISTER("frame_begin", nk_love_frame_begin);
-	NK_LOVE_REGISTER("frameBegin", nk_love_frame_begin);
-	NK_LOVE_REGISTER("frame_end", nk_love_frame_end);
-	NK_LOVE_REGISTER("frameEnd", nk_love_frame_end);
+	{"window_begin", nk_love_window_begin},
+	{"windowBegin", nk_love_window_begin},
+	{"window_end", nk_love_window_end},
+	{"windowEnd", nk_love_window_end},
+	{"window_get_bounds", nk_love_window_get_bounds},
+	{"windowGetBounds", nk_love_window_get_bounds},
+	{"window_get_position", nk_love_window_get_position},
+	{"windowGetPosition", nk_love_window_get_position},
+	{"window_get_size", nk_love_window_get_size},
+	{"windowGetSize", nk_love_window_get_size},
+	{"window_get_content_region", nk_love_window_get_content_region},
+	{"windowGetContentRegion", nk_love_window_get_content_region},
+	{"window_has_focus", nk_love_window_has_focus},
+	{"windowHasFocus", nk_love_window_has_focus},
+	{"window_is_collapsed", nk_love_window_is_collapsed},
+	{"windowIsCollapsed", nk_love_window_is_collapsed},
+	{"window_is_hidden", nk_love_window_is_hidden},
+	{"windowIsHidden", nk_love_window_is_hidden},
+	{"window_is_active", nk_love_window_is_active},
+	{"windowIsActive", nk_love_window_is_active},
+	{"window_is_hovered", nk_love_window_is_hovered},
+	{"windowIsHovered", nk_love_window_is_hovered},
+	{"window_is_any_hovered", nk_love_window_is_any_hovered},
+	{"windowIsAnyHovered", nk_love_window_is_any_hovered},
+	{"item_is_any_active", nk_love_item_is_any_active},
+	{"itemIsAnyActive", nk_love_item_is_any_active},
+	{"window_set_bounds", nk_love_window_set_bounds},
+	{"windowSetBounds", nk_love_window_set_bounds},
+	{"window_set_position", nk_love_window_set_position},
+	{"windowSetPosition", nk_love_window_set_position},
+	{"window_set_size", nk_love_window_set_size},
+	{"windowSetSize", nk_love_window_set_size},
+	{"window_set_focus", nk_love_window_set_focus},
+	{"windowSetFocus", nk_love_window_set_focus},
+	{"window_close", nk_love_window_close},
+	{"windowClose", nk_love_window_close},
+	{"window_collapse", nk_love_window_collapse},
+	{"windowCollapse", nk_love_window_collapse},
+	{"window_expand", nk_love_window_expand},
+	{"windowExpand", nk_love_window_expand},
+	{"window_show", nk_love_window_show},
+	{"windowShow", nk_love_window_show},
+	{"window_hide", nk_love_window_hide},
+	{"windowHide", nk_love_window_hide},
 
-	NK_LOVE_REGISTER("window_begin", nk_love_window_begin);
-	NK_LOVE_REGISTER("windowBegin", nk_love_window_begin);
-	NK_LOVE_REGISTER("window_end", nk_love_window_end);
-	NK_LOVE_REGISTER("windowEnd", nk_love_window_end);
-	NK_LOVE_REGISTER("window_get_bounds", nk_love_window_get_bounds);
-	NK_LOVE_REGISTER("windowGetBounds", nk_love_window_get_bounds);
-	NK_LOVE_REGISTER("window_get_position", nk_love_window_get_position);
-	NK_LOVE_REGISTER("windowGetPosition", nk_love_window_get_position);
-	NK_LOVE_REGISTER("window_get_size", nk_love_window_get_size);
-	NK_LOVE_REGISTER("windowGetSize", nk_love_window_get_size);
-	NK_LOVE_REGISTER("window_get_content_region", nk_love_window_get_content_region);
-	NK_LOVE_REGISTER("windowGetContentRegion", nk_love_window_get_content_region);
-	NK_LOVE_REGISTER("window_has_focus", nk_love_window_has_focus);
-	NK_LOVE_REGISTER("windowHasFocus", nk_love_window_has_focus);
-	NK_LOVE_REGISTER("window_is_collapsed", nk_love_window_is_collapsed);
-	NK_LOVE_REGISTER("windowIsCollapsed", nk_love_window_is_collapsed);
-	NK_LOVE_REGISTER("window_is_hidden", nk_love_window_is_hidden);
-	NK_LOVE_REGISTER("windowIsHidden", nk_love_window_is_hidden);
-	NK_LOVE_REGISTER("window_is_active", nk_love_window_is_active);
-	NK_LOVE_REGISTER("windowIsActive", nk_love_window_is_active);
-	NK_LOVE_REGISTER("window_is_hovered", nk_love_window_is_hovered);
-	NK_LOVE_REGISTER("windowIsHovered", nk_love_window_is_hovered);
-	NK_LOVE_REGISTER("window_is_any_hovered", nk_love_window_is_any_hovered);
-	NK_LOVE_REGISTER("windowIsAnyHovered", nk_love_window_is_any_hovered);
-	NK_LOVE_REGISTER("item_is_any_active", nk_love_item_is_any_active);
-	NK_LOVE_REGISTER("itemIsAnyActive", nk_love_item_is_any_active);
-	NK_LOVE_REGISTER("window_set_bounds", nk_love_window_set_bounds);
-	NK_LOVE_REGISTER("windowSetBounds", nk_love_window_set_bounds);
-	NK_LOVE_REGISTER("window_set_position", nk_love_window_set_position);
-	NK_LOVE_REGISTER("windowSetPosition", nk_love_window_set_position);
-	NK_LOVE_REGISTER("window_set_size", nk_love_window_set_size);
-	NK_LOVE_REGISTER("windowSetSize", nk_love_window_set_size);
-	NK_LOVE_REGISTER("window_set_focus", nk_love_window_set_focus);
-	NK_LOVE_REGISTER("windowSetFocus", nk_love_window_set_focus);
-	NK_LOVE_REGISTER("window_close", nk_love_window_close);
-	NK_LOVE_REGISTER("windowClose", nk_love_window_close);
-	NK_LOVE_REGISTER("window_collapse", nk_love_window_collapse);
-	NK_LOVE_REGISTER("windowCollapse", nk_love_window_collapse);
-	NK_LOVE_REGISTER("window_expand", nk_love_window_expand);
-	NK_LOVE_REGISTER("windowExpand", nk_love_window_expand);
-	NK_LOVE_REGISTER("window_show", nk_love_window_show);
-	NK_LOVE_REGISTER("windowShow", nk_love_window_show);
-	NK_LOVE_REGISTER("window_hide", nk_love_window_hide);
-	NK_LOVE_REGISTER("windowHide", nk_love_window_hide);
+	{"layout_row", nk_love_layout_row},
+	{"layoutRow", nk_love_layout_row},
+	{"layout_row_begin", nk_love_layout_row_begin},
+	{"layoutRowBegin", nk_love_layout_row_begin},
+	{"layout_row_push", nk_love_layout_row_push},
+	{"layoutRowPush", nk_love_layout_row_push},
+	{"layout_row_end", nk_love_layout_row_end},
+	{"layoutRowEnd", nk_love_layout_row_end},
+	{"layout_space_begin", nk_love_layout_space_begin},
+	{"layoutSpaceBegin", nk_love_layout_space_begin},
+	{"layout_space_push", nk_love_layout_space_push},
+	{"layoutSpacePush", nk_love_layout_space_push},
+	{"layout_space_end", nk_love_layout_space_end},
+	{"layoutSpaceEnd", nk_love_layout_space_end},
+	{"layout_space_bounds", nk_love_layout_space_bounds},
+	{"layoutSpaceBounds", nk_love_layout_space_bounds},
+	{"layout_space_to_screen", nk_love_layout_space_to_screen},
+	{"layoutSpaceToScreen", nk_love_layout_space_to_screen},
+	{"layout_space_to_local", nk_love_layout_space_to_local},
+	{"layoutSpaceToLocal", nk_love_layout_space_to_local},
+	{"layout_space_rect_to_screen", nk_love_layout_space_rect_to_screen},
+	{"layoutSpaceRectToScreen", nk_love_layout_space_rect_to_screen},
+	{"layout_space_rect_to_local", nk_love_layout_space_rect_to_local},
+	{"layoutSpaceRectToLocal", nk_love_layout_space_rect_to_local},
+	{"layout_ratio_from_pixel", nk_love_layout_ratio_from_pixel},
+	{"layoutRatioFromPixel", nk_love_layout_ratio_from_pixel},
 
-	NK_LOVE_REGISTER("layout_row", nk_love_layout_row);
-	NK_LOVE_REGISTER("layoutRow", nk_love_layout_row);
-	NK_LOVE_REGISTER("layout_row_begin", nk_love_layout_row_begin);
-	NK_LOVE_REGISTER("layoutRowBegin", nk_love_layout_row_begin);
-	NK_LOVE_REGISTER("layout_row_push", nk_love_layout_row_push);
-	NK_LOVE_REGISTER("layoutRowPush", nk_love_layout_row_push);
-	NK_LOVE_REGISTER("layout_row_end", nk_love_layout_row_end);
-	NK_LOVE_REGISTER("layoutRowEnd", nk_love_layout_row_end);
-	NK_LOVE_REGISTER("layout_space_begin", nk_love_layout_space_begin);
-	NK_LOVE_REGISTER("layoutSpaceBegin", nk_love_layout_space_begin);
-	NK_LOVE_REGISTER("layout_space_push", nk_love_layout_space_push);
-	NK_LOVE_REGISTER("layoutSpacePush", nk_love_layout_space_push);
-	NK_LOVE_REGISTER("layout_space_end", nk_love_layout_space_end);
-	NK_LOVE_REGISTER("layoutSpaceEnd", nk_love_layout_space_end);
-	NK_LOVE_REGISTER("layout_space_bounds", nk_love_layout_space_bounds);
-	NK_LOVE_REGISTER("layoutSpaceBounds", nk_love_layout_space_bounds);
-	NK_LOVE_REGISTER("layout_space_to_screen", nk_love_layout_space_to_screen);
-	NK_LOVE_REGISTER("layoutSpaceToScreen", nk_love_layout_space_to_screen);
-	NK_LOVE_REGISTER("layout_space_to_local", nk_love_layout_space_to_local);
-	NK_LOVE_REGISTER("layoutSpaceToLocal", nk_love_layout_space_to_local);
-	NK_LOVE_REGISTER("layout_space_rect_to_screen", nk_love_layout_space_rect_to_screen);
-	NK_LOVE_REGISTER("layoutSpaceRectToScreen", nk_love_layout_space_rect_to_screen);
-	NK_LOVE_REGISTER("layout_space_rect_to_local", nk_love_layout_space_rect_to_local);
-	NK_LOVE_REGISTER("layoutSpaceRectToLocal", nk_love_layout_space_rect_to_local);
-	NK_LOVE_REGISTER("layout_ratio_from_pixel", nk_love_layout_ratio_from_pixel);
-	NK_LOVE_REGISTER("layoutRatioFromPixel", nk_love_layout_ratio_from_pixel);
+	{"group_begin", nk_love_group_begin},
+	{"groupBegin", nk_love_group_begin},
+	{"group_end", nk_love_group_end},
+	{"groupEnd", nk_love_group_end},
 
-	NK_LOVE_REGISTER("group_begin", nk_love_group_begin);
-	NK_LOVE_REGISTER("groupBegin", nk_love_group_begin);
-	NK_LOVE_REGISTER("group_end", nk_love_group_end);
-	NK_LOVE_REGISTER("groupEnd", nk_love_group_end);
+	{"tree_push", nk_love_tree_push},
+	{"treePush", nk_love_tree_push},
+	{"tree_pop", nk_love_tree_pop},
+	{"treePop", nk_love_tree_pop},
 
-	NK_LOVE_REGISTER("tree_push", nk_love_tree_push);
-	NK_LOVE_REGISTER("treePush", nk_love_tree_push);
-	NK_LOVE_REGISTER("tree_pop", nk_love_tree_pop);
-	NK_LOVE_REGISTER("treePop", nk_love_tree_pop);
+	{"color_rgba", nk_love_color_rgba},
+	{"colorRGBA", nk_love_color_rgba},
+	{"color_hsva", nk_love_color_hsva},
+	{"colorHSVA", nk_love_color_hsva},
+	{"color_parse_rgba", nk_love_color_parse_rgba},
+	{"colorParseRGBA", nk_love_color_parse_rgba},
+	{"color_parse_hsva", nk_love_color_parse_hsva},
+	{"colorParseHSVA", nk_love_color_parse_hsva},
 
-	NK_LOVE_REGISTER("color_rgba", nk_love_color_rgba);
-	NK_LOVE_REGISTER("colorRGBA", nk_love_color_rgba);
-	NK_LOVE_REGISTER("color_hsva", nk_love_color_hsva);
-	NK_LOVE_REGISTER("colorHSVA", nk_love_color_hsva);
-	NK_LOVE_REGISTER("color_parse_rgba", nk_love_color_parse_rgba);
-	NK_LOVE_REGISTER("colorParseRGBA", nk_love_color_parse_rgba);
-	NK_LOVE_REGISTER("color_parse_hsva", nk_love_color_parse_hsva);
-	NK_LOVE_REGISTER("colorParseHSVA", nk_love_color_parse_hsva);
+	{"label", nk_love_label},
+	{"image", nk_love_image},
+	{"button", nk_love_button},
+	{"button_set_behavior", nk_love_button_set_behavior},
+	{"buttonSetBehavior", nk_love_button_set_behavior},
+	{"button_push_behavior", nk_love_button_push_behavior},
+	{"buttonPushBehavior", nk_love_button_push_behavior},
+	{"button_pop_behavior", nk_love_button_pop_behavior},
+	{"buttonPopBehavior", nk_love_button_pop_behavior},
+	{"checkbox", nk_love_checkbox},
+	{"radio", nk_love_radio},
+	{"selectable", nk_love_selectable},
+	{"slider", nk_love_slider},
+	{"progress", nk_love_progress},
+	{"color_picker", nk_love_color_picker},
+	{"colorPicker", nk_love_color_picker},
+	{"property", nk_love_property},
+	{"edit", nk_love_edit},
+	{"popup_begin", nk_love_popup_begin},
+	{"popupBegin", nk_love_popup_begin},
+	{"popup_close", nk_love_popup_close},
+	{"popupClose", nk_love_popup_close},
+	{"popup_end", nk_love_popup_end},
+	{"popupEnd", nk_love_popup_end},
+	{"combobox", nk_love_combobox},
+	{"combobox_begin", nk_love_combobox_begin},
+	{"comboboxBegin", nk_love_combobox_begin},
+	{"combobox_item", nk_love_combobox_item},
+	{"comboboxItem", nk_love_combobox_item},
+	{"combobox_close", nk_love_combobox_close},
+	{"comboboxClose", nk_love_combobox_close},
+	{"combobox_end", nk_love_combobox_end},
+	{"comboboxEnd", nk_love_combobox_end},
+	{"contextual_begin", nk_love_contextual_begin},
+	{"contextualBegin", nk_love_contextual_begin},
+	{"contextual_item", nk_love_contextual_item},
+	{"contextualItem", nk_love_contextual_item},
+	{"contextual_close", nk_love_contextual_close},
+	{"contextualClose", nk_love_contextual_close},
+	{"contextual_end", nk_love_contextual_end},
+	{"contextualEnd", nk_love_contextual_end},
+	{"tooltip", nk_love_tooltip},
+	{"tooltip_begin", nk_love_tooltip_begin},
+	{"tooltipBegin", nk_love_tooltip_begin},
+	{"tooltip_end", nk_love_tooltip_end},
+	{"tooltipEnd", nk_love_tooltip_end},
+	{"menubar_begin", nk_love_menubar_begin},
+	{"menubarBegin", nk_love_menubar_begin},
+	{"menubar_end", nk_love_menubar_end},
+	{"menubarEnd", nk_love_menubar_end},
+	{"menu_begin", nk_love_menu_begin},
+	{"menuBegin", nk_love_menu_begin},
+	{"menu_item", nk_love_menu_item},
+	{"menuItem", nk_love_menu_item},
+	{"menu_close", nk_love_menu_close},
+	{"menuClose", nk_love_menu_close},
+	{"menu_end", nk_love_menu_end},
+	{"menuEnd", nk_love_menu_end},
 
-	NK_LOVE_REGISTER("label", nk_love_label);
-	NK_LOVE_REGISTER("image", nk_love_image);
-	NK_LOVE_REGISTER("button", nk_love_button);
-	NK_LOVE_REGISTER("button_set_behavior", nk_love_button_set_behavior);
-	NK_LOVE_REGISTER("buttonSetBehavior", nk_love_button_set_behavior);
-	NK_LOVE_REGISTER("button_push_behavior", nk_love_button_push_behavior);
-	NK_LOVE_REGISTER("buttonPushBehavior", nk_love_button_push_behavior);
-	NK_LOVE_REGISTER("button_pop_behavior", nk_love_button_pop_behavior);
-	NK_LOVE_REGISTER("buttonPopBehavior", nk_love_button_pop_behavior);
-	NK_LOVE_REGISTER("checkbox", nk_love_checkbox);
-	NK_LOVE_REGISTER("radio", nk_love_radio);
-	NK_LOVE_REGISTER("selectable", nk_love_selectable);
-	NK_LOVE_REGISTER("slider", nk_love_slider);
-	NK_LOVE_REGISTER("progress", nk_love_progress);
-	NK_LOVE_REGISTER("color_picker", nk_love_color_picker);
-	NK_LOVE_REGISTER("colorPicker", nk_love_color_picker);
-	NK_LOVE_REGISTER("property", nk_love_property);
-	NK_LOVE_REGISTER("edit", nk_love_edit);
-	NK_LOVE_REGISTER("popup_begin", nk_love_popup_begin);
-	NK_LOVE_REGISTER("popupBegin", nk_love_popup_begin);
-	NK_LOVE_REGISTER("popup_close", nk_love_popup_close);
-	NK_LOVE_REGISTER("popupClose", nk_love_popup_close);
-	NK_LOVE_REGISTER("popup_end", nk_love_popup_end);
-	NK_LOVE_REGISTER("popupEnd", nk_love_popup_end);
-	NK_LOVE_REGISTER("combobox", nk_love_combobox);
-	NK_LOVE_REGISTER("combobox_begin", nk_love_combobox_begin);
-	NK_LOVE_REGISTER("comboboxBegin", nk_love_combobox_begin);
-	NK_LOVE_REGISTER("combobox_item", nk_love_combobox_item);
-	NK_LOVE_REGISTER("comboboxItem", nk_love_combobox_item);
-	NK_LOVE_REGISTER("combobox_close", nk_love_combobox_close);
-	NK_LOVE_REGISTER("comboboxClose", nk_love_combobox_close);
-	NK_LOVE_REGISTER("combobox_end", nk_love_combobox_end);
-	NK_LOVE_REGISTER("comboboxEnd", nk_love_combobox_end);
-	NK_LOVE_REGISTER("contextual_begin", nk_love_contextual_begin);
-	NK_LOVE_REGISTER("contextualBegin", nk_love_contextual_begin);
-	NK_LOVE_REGISTER("contextual_item", nk_love_contextual_item);
-	NK_LOVE_REGISTER("contextualItem", nk_love_contextual_item);
-	NK_LOVE_REGISTER("contextual_close", nk_love_contextual_close);
-	NK_LOVE_REGISTER("contextualClose", nk_love_contextual_close);
-	NK_LOVE_REGISTER("contextual_end", nk_love_contextual_end);
-	NK_LOVE_REGISTER("contextualEnd", nk_love_contextual_end);
-	NK_LOVE_REGISTER("tooltip", nk_love_tooltip);
-	NK_LOVE_REGISTER("tooltip_begin", nk_love_tooltip_begin);
-	NK_LOVE_REGISTER("tooltipBegin", nk_love_tooltip_begin);
-	NK_LOVE_REGISTER("tooltip_end", nk_love_tooltip_end);
-	NK_LOVE_REGISTER("tooltipEnd", nk_love_tooltip_end);
-	NK_LOVE_REGISTER("menubar_begin", nk_love_menubar_begin);
-	NK_LOVE_REGISTER("menubarBegin", nk_love_menubar_begin);
-	NK_LOVE_REGISTER("menubar_end", nk_love_menubar_end);
-	NK_LOVE_REGISTER("menubarEnd", nk_love_menubar_end);
-	NK_LOVE_REGISTER("menu_begin", nk_love_menu_begin);
-	NK_LOVE_REGISTER("menuBegin", nk_love_menu_begin);
-	NK_LOVE_REGISTER("menu_item", nk_love_menu_item);
-	NK_LOVE_REGISTER("menuItem", nk_love_menu_item);
-	NK_LOVE_REGISTER("menu_close", nk_love_menu_close);
-	NK_LOVE_REGISTER("menuClose", nk_love_menu_close);
-	NK_LOVE_REGISTER("menu_end", nk_love_menu_end);
-	NK_LOVE_REGISTER("menuEnd", nk_love_menu_end);
+	{"style_default", nk_love_style_default},
+	{"styleDefault", nk_love_style_default},
+	{"style_load_colors", nk_love_style_load_colors},
+	{"styleLoadColors", nk_love_style_load_colors},
+	{"style_set_font", nk_love_style_set_font},
+	{"styleSetFont", nk_love_style_set_font},
+	{"style_push", nk_love_style_push},
+	{"stylePush", nk_love_style_push},
+	{"style_pop", nk_love_style_pop},
+	{"stylePop", nk_love_style_pop},
 
-	NK_LOVE_REGISTER("style_default", nk_love_style_default);
-	NK_LOVE_REGISTER("styleDefault", nk_love_style_default);
-	NK_LOVE_REGISTER("style_load_colors", nk_love_style_load_colors);
-	NK_LOVE_REGISTER("styleLoadColors", nk_love_style_load_colors);
-	NK_LOVE_REGISTER("style_set_font", nk_love_style_set_font);
-	NK_LOVE_REGISTER("styleSetFont", nk_love_style_set_font);
-	NK_LOVE_REGISTER("style_push", nk_love_style_push);
-	NK_LOVE_REGISTER("stylePush", nk_love_style_push);
-	NK_LOVE_REGISTER("style_pop", nk_love_style_pop);
-	NK_LOVE_REGISTER("stylePop", nk_love_style_pop);
+	{"widget_bounds", nk_love_widget_bounds},
+	{"widgetBounds", nk_love_widget_bounds},
+	{"widget_position", nk_love_widget_position},
+	{"widgetPosition", nk_love_widget_position},
+	{"widget_size", nk_love_widget_size},
+	{"widgetSize", nk_love_widget_size},
+	{"widget_width", nk_love_widget_width},
+	{"widgetWidth", nk_love_widget_width},
+	{"widget_height", nk_love_widget_height},
+	{"widgetHeight", nk_love_widget_height},
+	{"widget_is_hovered", nk_love_widget_is_hovered},
+	{"widgetIsHovered", nk_love_widget_is_hovered},
+	{"widget_is_mouse_clicked", nk_love_widget_is_mouse_clicked},
+	{"widgetIsMouseClicked", nk_love_widget_is_mouse_clicked},
+	{"widget_has_mouse_click", nk_love_widget_has_mouse_click},
+	{"widgetHasMouseClick", nk_love_widget_has_mouse_click},
+	{"widgetHasMousePressed", nk_love_widget_has_mouse_pressed},
+	{"widgetHasMouseReleased", nk_love_widget_has_mouse_released},
+	{"widgetIsMousePressed", nk_love_widget_is_mouse_pressed},
+	{"widgetIsMouseReleased", nk_love_widget_is_mouse_released},
+	{"spacing", nk_love_spacing},
 
-	NK_LOVE_REGISTER("widget_bounds", nk_love_widget_bounds);
-	NK_LOVE_REGISTER("widgetBounds", nk_love_widget_bounds);
-	NK_LOVE_REGISTER("widget_position", nk_love_widget_position);
-	NK_LOVE_REGISTER("widgetPosition", nk_love_widget_position);
-	NK_LOVE_REGISTER("widget_size", nk_love_widget_size);
-	NK_LOVE_REGISTER("widgetSize", nk_love_widget_size);
-	NK_LOVE_REGISTER("widget_width", nk_love_widget_width);
-	NK_LOVE_REGISTER("widgetWidth", nk_love_widget_width);
-	NK_LOVE_REGISTER("widget_height", nk_love_widget_height);
-	NK_LOVE_REGISTER("widgetHeight", nk_love_widget_height);
-	NK_LOVE_REGISTER("widget_is_hovered", nk_love_widget_is_hovered);
-	NK_LOVE_REGISTER("widgetIsHovered", nk_love_widget_is_hovered);
-	NK_LOVE_REGISTER("widget_is_mouse_clicked", nk_love_widget_is_mouse_clicked);
-	NK_LOVE_REGISTER("widgetIsMouseClicked", nk_love_widget_is_mouse_clicked);
-	NK_LOVE_REGISTER("widget_has_mouse_click", nk_love_widget_has_mouse_click);
-	NK_LOVE_REGISTER("widgetHasMouseClick", nk_love_widget_has_mouse_click);
-	NK_LOVE_REGISTER("widgetHasMousePressed", nk_love_widget_has_mouse_pressed);
-	NK_LOVE_REGISTER("widgetHasMouseReleased", nk_love_widget_has_mouse_released);
-	NK_LOVE_REGISTER("widgetIsMousePressed", nk_love_widget_is_mouse_pressed);
-	NK_LOVE_REGISTER("widgetIsMouseReleased", nk_love_widget_is_mouse_released);
-	NK_LOVE_REGISTER("spacing", nk_love_spacing);
-
-	NK_LOVE_REGISTER("line", nk_love_line);
-	NK_LOVE_REGISTER("curve", nk_love_curve);
-	NK_LOVE_REGISTER("polygon", nk_love_polygon);
-	NK_LOVE_REGISTER("circle", nk_love_circle);
-	NK_LOVE_REGISTER("ellipse", nk_love_ellipse);
-	NK_LOVE_REGISTER("arc", nk_love_arc);
-	NK_LOVE_REGISTER("rectMultiColor", nk_love_rect_multi_color);
-	NK_LOVE_REGISTER("scissor", nk_love_push_scissor);
+	{"line", nk_love_line},
+	{"curve", nk_love_curve},
+	{"polygon", nk_love_polygon},
+	{"circle", nk_love_circle},
+	{"ellipse", nk_love_ellipse},
+	{"arc", nk_love_arc},
+	{"rectMultiColor", nk_love_rect_multi_color},
+	{"scissor", nk_love_push_scissor},
 	/* image */
-	NK_LOVE_REGISTER("text", nk_love_text);
+	{"text", nk_love_text},
 
-	NK_LOVE_REGISTER("inputHasMousePressed", nk_love_input_has_mouse_pressed);
-	NK_LOVE_REGISTER("inputHasMouseReleased", nk_love_input_has_mouse_released);
-	NK_LOVE_REGISTER("inputIsMousePressed", nk_love_input_is_mouse_pressed);
-	NK_LOVE_REGISTER("inputIsMouseReleased", nk_love_input_is_mouse_released);
-	NK_LOVE_REGISTER("inputWasHovered", nk_love_input_was_hovered);
-	NK_LOVE_REGISTER("inputIsHovered", nk_love_input_is_hovered);
+	{"inputHasMousePressed", nk_love_input_has_mouse_pressed},
+	{"inputHasMouseReleased", nk_love_input_has_mouse_released},
+	{"inputIsMousePressed", nk_love_input_is_mouse_pressed},
+	{"inputIsMouseReleased", nk_love_input_is_mouse_released},
+	{"inputWasHovered", nk_love_input_was_hovered},
+	{"inputIsHovered", nk_love_input_is_hovered},
+	{ 0, 0 }
+};
 
-	return 1;
+static const lua_CFunction types[] =
+{
+	0
+};
+
+extern "C" int luaopen_love_plugin_nuklear(lua_State *L)
+{
+	WrappedModule w;
+	w.module = &nuklear::Nuklear::instance;
+	w.name = "nuklear";
+	w.type = &Module::type;
+	w.functions = functions;
+	w.types = types;
+
+	return luax_register_module(L, w);
 }
 
 #undef NK_LOVE_REGISTER
