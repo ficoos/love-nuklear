@@ -18,7 +18,7 @@ public:
 	// Implements Module.
 	virtual ModuleType getModuleType() const
 	{
-		return M_NUKLEAR;
+		return M_PLUGIN;
 	}
 
 	virtual const char *getName() const

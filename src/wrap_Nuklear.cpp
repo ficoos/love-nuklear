@@ -3602,7 +3602,7 @@ static const lua_CFunction types[] =
 	0
 };
 
-extern "C" int luaopen_love_plugin_nuklear(lua_State *L)
+extern "C" int luaopen_nuklear(lua_State *L)
 {
 	WrappedModule w;
 	w.module = &nuklear::Nuklear::instance;
